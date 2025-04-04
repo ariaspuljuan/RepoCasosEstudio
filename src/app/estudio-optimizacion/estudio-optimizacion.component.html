@@ -219,6 +219,174 @@
                 </table>
               </div>
 
+              <!-- Actualizacion Y Mejoras -->
+
+              <!-- Tabla de Puntos de Calificación Estimados -->
+              <h3 class="h5 mt-4 mb-3">Puntos de Calificación Estimados</h3>
+              <div class="table-responsive">
+                <table class="table table-bordered">
+                  <thead class="table-primary">
+                    <tr>
+                      <th rowspan="2" class="align-middle">Día de estudio</th>
+                      <th colspan="4" class="text-center">Curso</th>
+                    </tr>
+                    <tr>
+                      <th *ngFor="let tema of temas; let i = index">
+                        {{ i + 1 }}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr *ngFor="let dia of dias; let i = index">
+                      <td class="font-weight-bold">{{ i + 1 }}</td>
+                      <td *ngFor="let tema of temas">
+                        {{
+                          calcularPuntosPorDiaTema(dia, tema) | number : "1.0-1"
+                        }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Tabla de Etapas por Día y Resultados Dinámicos -->
+              <h3 class="h5 mt-4 mb-3">Resultados del Análisis Dinámico</h3>
+              <div
+                class="table-responsive"
+                *ngFor="let etapa of etapasAnalisis; let s = index"
+              >
+                <h4 class="h6 mt-3">S{{ s + 1 }}/x{{ s + 1 }}</h4>
+                <table class="table table-bordered">
+                  <thead class="table-light">
+                    <tr>
+                      <th></th>
+                      <th *ngFor="let i of [1, 2, 3, 4]">{{ i }}</th>
+                      <th>f*</th>
+                      <th>x*</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr *ngFor="let row of etapa.datos; let j = index">
+                      <td [ngClass]="{ 'bg-primary text-white': true }">
+                        {{ row.estado }}
+                      </td>
+                      <td
+                        *ngFor="let val of [1, 2, 3, 4]; let k = index"
+                        [ngClass]="{
+                          'bg-warning':
+                            k < temas.length && esDecisionOptima(s, j, k),
+                          'bg-success':
+                            k < temas.length && esMejorResultado(s, j, k)
+                        }"
+                      >
+                        {{ obtenerValorTabla(s, j, k) }}
+                      </td>
+                      <td>{{ row.valorOptimo }}</td>
+                      <td>{{ row.decisionOptima }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Diagrama de Red -->
+              <h3 class="h5 mt-4 mb-3">Diagrama de Red de la Solución</h3>
+              <div class="card">
+                <div class="card-body">
+                  <div class="network-diagram">
+                    <!-- Aquí se insertará el diagrama de red generado con Mermaid o SVG -->
+                    <div id="network-diagram-container" class="text-center">
+                      <svg
+                        viewBox="0 0 800 400"
+                        xmlns="http://www.w3.org/2000/svg"
+                        class="w-100"
+                      >
+                        <!-- Nodos representando días -->
+                        <g id="nodes">
+                          <g *ngFor="let dia of dias; let i = index">
+                            <circle
+                              [attr.cx]="100 + i * 150"
+                              cy="100"
+                              r="30"
+                              class="fill-primary"
+                            />
+                            <text
+                              [attr.x]="100 + i * 150"
+                              y="105"
+                              text-anchor="middle"
+                              class="text-white"
+                            >
+                              Día {{ i + 1 }}
+                            </text>
+                          </g>
+                        </g>
+
+                        <!-- Conexiones entre nodos -->
+                        <g id="connections">
+                          <g *ngFor="let conexion of conexionesSVG">
+                            <path
+                              [attr.d]="
+                                'M' +
+                                conexion.x1 +
+                                ' 100 L' +
+                                conexion.x2 +
+                                ' 100'
+                              "
+                              stroke="#333"
+                              stroke-width="2"
+                              marker-end="url(#arrowhead)"
+                            />
+                          </g>
+                        </g>
+
+                        <!-- Actividades por día -->
+                        <g id="activities">
+                          <g *ngFor="let dia of dias; let i = index">
+                            <g
+                              *ngFor="
+                                let actividad of resultado.calendario[dia];
+                                let j = index
+                              "
+                            >
+                              <rect
+                                [attr.x]="70 + i * 150"
+                                [attr.y]="150 + j * 50"
+                                width="60"
+                                height="40"
+                                rx="5"
+                                class="fill-light border"
+                              />
+                              <text
+                                [attr.x]="100 + i * 150"
+                                [attr.y]="175 + j * 50"
+                                text-anchor="middle"
+                                font-size="12"
+                              >
+                                {{ actividad.tema.substring(0, 8) }}
+                                {{ actividad.horas }}h
+                              </text>
+                            </g>
+                          </g>
+                        </g>
+
+                        <!-- Definición de marcadores -->
+                        <defs>
+                          <marker
+                            id="arrowhead"
+                            markerWidth="10"
+                            markerHeight="7"
+                            refX="9"
+                            refY="3.5"
+                            orient="auto"
+                          >
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
+                          </marker>
+                        </defs>
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <button class="btn btn-secondary mt-3" (click)="reiniciar()">
                 <i class="bi bi-arrow-left"></i> Volver a calcular
               </button>
