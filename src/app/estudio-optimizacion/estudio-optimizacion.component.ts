@@ -1,7 +1,11 @@
-import { Component, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormArray, FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Component, OnInit, ElementRef, ViewChild, AfterViewInit } from '@angular/core';
+import { FormBuilder, FormGroup, FormArray, Validators, FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { HttpClient, HttpClientModule } from '@angular/common/http';
+import { Chart, registerables } from 'chart.js';
+import { CommonModule } from '@angular/common';
+
+// Registrar todos los componentes de Chart.js
+Chart.register(...registerables);
 
 interface Tema {
   nombre: string;
@@ -29,6 +33,54 @@ interface ResultadoOptimizacion {
   };
 }
 
+interface ResultadoCursos {
+  puntuacion_total: number;
+  asignacion: {
+    curso: string;
+    dias: number;
+  }[];
+  tabla_decisiones: {
+    dia: number;
+    curso: string;
+    dias_acumulados: number;
+    puntuacion: number;
+  }[];
+  puntuaciones_cursos: {
+    curso: string;
+    dias_asignados: number;
+    puntuacion: number;
+  }[];
+  tabla_puntuaciones: number[][];
+  distribucion_dias: {
+    [key: string]: number;
+  };
+  contribucion_porcentual: {
+    [key: string]: number;
+  };
+  estados_explorados: {
+    dias_restantes: number;
+    asignados: number[];
+    mejor_puntuacion: number;
+    mejor_decision: number | null;
+  }[];
+  total_estados_explorados: number;
+  tablas_etapas: {
+    etapa: number;
+    curso: string;
+    filas: {
+      estado: number;
+      decisiones: {
+        dias: number;
+        valor: number;
+        calculo: string;
+      }[];
+      valor_optimo: number;
+      decision_optima: number;
+    }[];
+  }[];
+  descripcion: string;
+}
+
 interface EtapaAnalisis {
   etapa: number;
   datos: DatoEtapa[];
@@ -44,14 +96,18 @@ interface DatoEtapa {
 @Component({
   selector: 'app-estudio-optimizacion',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, HttpClientModule],
+  imports: [CommonModule, ReactiveFormsModule, FormsModule, HttpClientModule],
   templateUrl: './estudio-optimizacion.component.html',
   styleUrls: ['./estudio-optimizacion.component.scss']
 })
-export class EstudioOptimizacionComponent implements OnInit {
+export class EstudioOptimizacionComponent implements OnInit, AfterViewInit {
+  @ViewChild('rutaOptimaCanvas') rutaOptimaCanvas: ElementRef | undefined;
   estudianteForm: FormGroup;
   temasForm: FormGroup;
+  formulario: FormGroup;
   resultado: ResultadoOptimizacion | null = null;
+  resultadoCursos: ResultadoCursos | null = null;
+  rutaOptimaChart: Chart | undefined;
   calculando: boolean = false;
   error: string | null = null;
 
@@ -59,6 +115,14 @@ export class EstudioOptimizacionComponent implements OnInit {
   temas: string[] = [];
   etapasAnalisis: EtapaAnalisis[] = [];
   conexionesSVG: { x1: number, x2: number }[] = [];
+
+  // Tabla de puntuaciones editable
+  tablaPuntuaciones: number[][] = [
+    [5, 4, 5, 7],  // 1 día
+    [6, 6, 6, 8],  // 2 días
+    [7, 6, 7, 9],  // 3 días
+    [9, 8, 8, 10]  // 4 días
+  ];
 
   constructor(
     private fb: FormBuilder,
@@ -72,6 +136,10 @@ export class EstudioOptimizacionComponent implements OnInit {
     this.temasForm = this.fb.group({
       temas: this.fb.array([])
     });
+    
+    this.formulario = this.fb.group({
+      diasDisponibles: [7, [Validators.required, Validators.min(4), Validators.max(20)]]
+    });
   }
 
   ngOnInit(): void {
@@ -79,6 +147,13 @@ export class EstudioOptimizacionComponent implements OnInit {
     this.agregarTema('Física', 25, 7, 5);
     this.agregarTema('Programación', 25, 6, 8);
     this.agregarTema('Historia', 20, 4, 7);
+  }
+  
+  ngAfterViewInit(): void {
+    // El canvas podría no estar disponible inicialmente
+    if (this.resultadoCursos && this.rutaOptimaCanvas) {
+      this.crearGrafoRutaOptima();
+    }
   }
 
   get temasArray(): FormArray {
@@ -134,6 +209,178 @@ export class EstudioOptimizacionComponent implements OnInit {
           this.calculando = false;
         }
       });
+  }
+
+  calcularOptimizacionCursos(): void {
+    this.calculando = true;
+    this.error = null;
+    
+    // Obtenemos los valores de la tabla de puntuaciones
+    const puntuaciones = this.obtenerTablaPuntuaciones();
+    
+    // Preparamos los datos para enviar al backend
+    const datos = {
+      dias_disponibles: this.formulario.get('diasDisponibles')?.value,
+      puntuaciones: puntuaciones,
+      dias_minimos: 1,
+      dias_maximos: 4
+    };
+    
+    // Enviamos los datos al backend
+    this.http.post<ResultadoCursos>('http://localhost:5000/api/optimizar-cursos', datos)
+      .subscribe({
+        next: (response) => {
+          this.resultadoCursos = response;
+          this.calculando = false;
+          console.log('Resultado:', this.resultadoCursos);
+          
+          // Una vez que tenemos los resultados, creamos el grafo de ruta óptima
+          setTimeout(() => {
+            this.crearGrafoRutaOptima();
+          }, 100);
+        },
+        error: (error) => {
+          this.error = 'Error al calcular la optimización: ' + (error.error?.error || error.message);
+          this.calculando = false;
+          console.error('Error al calcular la optimización:', error);
+        }
+      });
+  }
+
+  obtenerTablaPuntuaciones(): number[][] {
+    return this.tablaPuntuaciones;
+  }
+
+  crearGrafoRutaOptima(): void {
+    if (!this.resultadoCursos || !this.rutaOptimaCanvas) return;
+
+    // Destruir el gráfico anterior si existe
+    if (this.rutaOptimaChart) {
+      this.rutaOptimaChart.destroy();
+    }
+
+    const ctx = this.rutaOptimaCanvas.nativeElement.getContext('2d');
+
+    // Preparar los datos para el grafo
+    const etapas = this.resultadoCursos.tablas_etapas;
+
+    // Crear nodos y conexiones para el grafo
+    const nodos: {x: number, y: number, label: string, estado: number, etapa: number}[] = [];
+    const conexiones: {from: number, to: number, label: string}[] = [];
+
+    // Crear un mapa para rastrear la ruta óptima
+    const rutaOptima = new Map<string, number>();
+
+    // Obtener la asignación óptima
+    const asignacionOptima = this.resultadoCursos.asignacion.map(a => a.dias);
+
+    // Calcular los días disponibles iniciales
+    const diasDisponiblesIniciales = this.formulario.get('diasDisponibles')?.value;
+
+    // Crear nodos para cada etapa y estado
+    let diasRestantes = diasDisponiblesIniciales;
+    for (let i = 0; i < etapas.length; i++) {
+      const etapa = etapas[i];
+
+      // Encontrar la fila correspondiente al estado actual (días restantes)
+      const filaActual = etapa.filas.find(f => f.estado === diasRestantes);
+
+      if (filaActual) {
+        // Guardar la decisión óptima para este estado
+        rutaOptima.set(`${i}_${diasRestantes}`, filaActual.decision_optima);
+
+        // Actualizar los días restantes para la siguiente etapa
+        diasRestantes -= filaActual.decision_optima;
+      }
+    }
+
+    // Preparar datos para el gráfico
+    const labels: string[] = [];
+    const data: number[] = [];
+    const backgroundColors: string[] = [];
+
+    // Añadir el estado inicial
+    labels.push(`Estado Inicial (${diasDisponiblesIniciales} días)`);
+    data.push(0);
+    backgroundColors.push('rgba(54, 162, 235, 0.2)');
+
+    // Añadir cada decisión en la ruta óptima
+    diasRestantes = diasDisponiblesIniciales;
+    let puntuacionAcumulada = 0;
+
+    for (let i = 0; i < etapas.length; i++) {
+      const etapa = etapas[i];
+      const decision = rutaOptima.get(`${i}_${diasRestantes}`) || 0;
+
+      if (decision > 0) {
+        // Calcular la puntuación para esta decisión
+        const puntuacion = this.resultadoCursos.tabla_puntuaciones[decision-1][i];
+        puntuacionAcumulada += puntuacion;
+
+        labels.push(`${etapa.curso}: ${decision} día(s) → ${puntuacionAcumulada} pts`);
+        data.push(puntuacionAcumulada);
+        backgroundColors.push('rgba(75, 192, 192, 0.2)');
+
+        // Actualizar días restantes
+        diasRestantes -= decision;
+      }
+    }
+
+    // Crear el gráfico
+    this.rutaOptimaChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Puntuación Acumulada',
+          data: data,
+          backgroundColor: 'rgba(75, 192, 192, 0.2)',
+          borderColor: 'rgba(75, 192, 192, 1)',
+          borderWidth: 2,
+          pointBackgroundColor: backgroundColors,
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 6,
+          pointHoverRadius: 8,
+          fill: false,
+          tension: 0.1
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          title: {
+            display: true,
+            text: 'Ruta Óptima de Decisiones',
+            font: {
+              size: 16
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return `Puntuación: ${context.parsed.y}`;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: 'Puntuación Acumulada'
+            }
+          },
+          x: {
+            title: {
+              display: true,
+              text: 'Etapas de Decisión'
+            }
+          }
+        }
+      }
+    });
   }
 
   verificarPesoTotal(): number {
